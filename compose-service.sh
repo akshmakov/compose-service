@@ -81,7 +81,7 @@ EOF
 ###################################################
 
 SERVICE_FILE=${COMPOSE_SERVICE_DEFINITION-$(pwd)/compose-service}
-SERVICE_NAME="compose-service-$INVOKE_TS"
+SERVICE_NAME=${COMPOSE_SERVICE_NAME-"compose-service-$INVOKE_TS"}
 TARGET_DIR=${COMPOSE_SERVICE_TARGET_DIR-/var/opt/compose-service/deploy}
 DATA_DIR=${COMPOSE_SERVICE_DATA_DIR-/var/opt/compose-service}
 CONF_DIR=${COMPOSE_SERVICE_CONFIG_DIR-/etc/compose-service}
@@ -168,7 +168,7 @@ else
 fi
 
 
-if [[ $DRY_RUN == "NO" &&  $EUID != 0 ]]; then
+if [[ $DRY_RUN == "NO" &&  $EUID = 0 ]]; then
     error_exit "Please run as root"
 fi
 
@@ -205,24 +205,33 @@ if [ -e $SERVICE_FILE.override ] ; then
     source $SERVICE_FILE.override
 fi
 
-if [[ -z $SERVICE_YML \
-	    || -z  $SERVICE_INIT_FN \
+
+if [[  -z  $SERVICE_INIT_FN \
 	    || -z $SERVICE_DESTROY_FN \
 	    || -z $SERVICE_TEST \
     ]] ; then
 
     
-    echo "Malformed Service File $SERVICE_FILE : Missing Required Variables"
-    
+    echo "Malformed Service File $SERVICE_FILE : Missing Required Variables"    
 fi
 
     
 
 
-
+SERVICE_DEPLOY_YML=${SERVICE_DEPLOY_YML-"./docker-service.yml"}
 SERVICE_DEPLOYMENT=$TARGET_DIR/$SERVICE_NAME.yml
 SERVICE_DATA=$DATA_DIR/$SERVICE_NAME
+SERVICE_CONFIG_ROOT=$CONF_DIR/service.d
+SERVICE_CONFIG=$SERVICE_CONFIG_ROOT/$SERVICE_NAME.service
 
+cat <<EOF >&3
+---------------------debug-------------------------
+compose-service service specific configuration
+            service name: $SERVICE_NAME
+             service yml: $SERVICE_DEPLOY_YML
+      service deployment: $SERVICE_DEPLOYMENT
+---------------------------------------------------
+EOF
 
 
 
@@ -231,11 +240,81 @@ SERVICE_DATA=$DATA_DIR/$SERVICE_NAME
 ##########################################################
 function prep_deployment
 {
+    
+    if [[ ! -d $CONF_DIR && $FORCE != YES ]]; then
+	error_exit "Cannot Deploy $SERVICE_NAME, Configuration Directory $CONF_DIR doesn't exist or isn't a directory"
+    fi
+
+    if [[ ! -d $SERVICE_CONFIG_ROOT ]]; then
+	echo "First configured deployment Creating Service dir $SERVICE_CONFIG_ROOT" >&3	
+	if [[ $DRY_RUN = NO ]]; then
+	    mkdir -p $SERVICE_CONFIG_ROOT
+	else
+	    echo "-dry-run- mkdir -p $SERVICE_CONFIG_ROOT"
+	fi
+    fi
+
+    if [[ ! -d $DATA_DIR ]]; then
+	error_exit "Cannot Deploy $SERVICE_NAME, Data Root Directory $DATA_DIR doesn't exist or isn't a directory"
+    fi
+
+    if [[ ! -d $TARGET_DIR ]]; then
+	error_exit "Cannot Deploy $SERVICE_NAME, Target Dir $TARGET_DIR doesn't exist"
+    fi
+
+
+    if [[ -d $SERVICE_DATA ]]; then
+	echo "-debug- Service Data Folder $SERVICE_DATA exists"
+    else
+	if [[ $DRY_RUN = NO ]]; then
+	    mkdir -p $SERVICE_DATA
+	else
+	    echo "-dry-run- mkdir -p $SERVICE_DATA"
+	fi
+    fi
+
+
+    
+    if [[ -e $SERVICE_DEPLOYMENT && $FORCE != YES ]]; then
+	error_exit "Cannot Deploy $SERVICE_NAME Deployment : $SERVICE_DEPLOYMENT exists  - use update or --force"
+    fi
+
+
+    if [[ -e $SERVICE_CONFIG && $FORCE != YES ]]; then
+	error_exit "Cannot deploy $SERVICE_NAME Deployment Configuration File : $SERVICE_CONFIG exists - use update or --force"
+    fi
+
     return 0
 }
 
 function prep_config
 {
+    
+    CONF=$(cat <<-EOF
+SERVICE_NAME=$SERVICE_NAME
+SERVICE_TARGET_ROOT=`cd $TARGET_DIR; pwd`
+SERVICE_COMPOSE=`cd $TARGET_DIR;pwd`/$SERVICE_NAME.yml
+SERVICE_DATA_ROOT=`cd $DATA_DIR;pwd`
+SERVICE_DATA_DIR=`cd $DATA_DIR;pwd`/$SERVICE_NAME
+EOF
+	)
+
+    cat <<EOF >&3
+---------------------debug-------------------------
+$CONF
+---------------------------------------------------
+EOF
+   
+
+    if [[ $DRY_RUN = NO ]]; then
+	cat <<-EOF > $SERVICE_CONFIG
+$CONF
+EOF
+    else
+	echo "-dry-run- echo $CONF > $SERVICE_CONFIG"
+    fi
+
+
     return 0
 }
 
@@ -250,6 +329,75 @@ function destroy_service
 }
 
 
+function do_deploy
+{
+    prep_deployment
+    prep_config
+    
+    
+    if [[ ! -z $SERVICE_DEPLOY_YML ]]; then
+
+	if [[ -e $SERVICE_INIT_FN ]]; then
+	    echo "-debug- using SERVICE_INIT_FN to initialize yml data"
+	    YML_DATA=$SERVICE_INIT_FN
+	else
+	    YML_DATA=$(cat $SERVICE_DEPLOY_YML)
+	fi
+
+	cat <<-EOF >&3
+-------------------debug-----------------
+$YML_DATA
+-----------------------------------------
+EOF
+	
+	if [[ $DRY_RUN = NO ]]; then
+	    cat <<-EOF >  $SERVICE_DEPLOYMENT
+$YML_DATA
+EOF
+	else
+	    echo "-dry-run- cat \$YML_DATA > $SERVICE_DEPLOYMENT"
+	fi
+    else
+	error_exit "Service Defintion does not define deploy files"
+    fi
+
+    return 0
+    
+
+}
+
+function do_install_initd
+{
+    return 0
+}
+
+function do_install_cron
+{
+    return 0
+}
+
+function do_install_compose
+{
+    return 0
+}
+
+function do_update
+{
+    return 0
+}
+
+function do_remove
+{
+    return 0
+}
+
+function do_destroy
+{
+    if [[ $FORCE = NO ]] ; then
+	error_exit "Use the --force , Luke"
+    fi
+}
+
 ##########################################
 ### Peform Command########################
 ##########################################
@@ -258,33 +406,33 @@ function destroy_service
 case $COMMAND in
     deploy)
 	echo "Deploying Service $SERVICE_NAME"
-	# do_deploy
+	do_deploy
 	;;
     install-initd)
 	echo "Installing init.d service for $SERVICE_NAME"
-	# do_install_init
+	do_install_initd
 	;;
     install-cron)
 	echo "Installing $SERVICE_NAME as crontab under current user $USER"
-	# do_install_cron
+	do_install_cron
 	;;
     install-compose)
 	echo "Installing $SERVICE_NAME under compose-service umbrella"
-	# do_install_compose
+	do_install_compose
 	;;
     update)
 	echo "Updating $SERVICE_NAME"
-	# do_update
+	do_update
 	;;
     remove)
 	echo "Removing $SERVICE_NAME"
-	# do_remove
+	do_remove
 	;;
     destroy)
 	echo "Destroying $SERVICE_NAME"
-	# do_destroy
+	do_destroy
 	;;
     *)
-	error_exit "Unknown Command"
+	error_exit "$COMMAND - Unknown Command"
 	;;
 esac		
