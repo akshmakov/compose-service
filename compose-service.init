@@ -1,0 +1,47 @@
+#!/bin/sh
+
+### BEGIN INIT INFO
+# Provides:		compose-service
+# Required-Start:	$docker
+# Required-Stop:	$docker
+# Default-Start:	2 3 4 5
+# Default-Stop:		0 1 6
+# Short-Description:	Docker Compose Service Manager
+### END INIT INFO
+
+set -e
+
+
+SERVICE_NAME="compose-service"
+UPOPTS="-d --no-recreate --no-build --no-deps"
+ 
+. /lib/lsb/init-functions
+
+case "$1" in
+    start)
+        log_daemon_msg "Starting compose-server service" "$SERVICE_NAME" ||  true
+        docker-compose $OPTS up $UPOPTS
+        ;;
+
+    stop)
+        log_daemon_msg "Stopping GOGS Git Server VIA Docker Compose" "composegogs" || true
+        docker-compose $OPTS stop
+        ;;
+
+    reload)
+        log_daemon_msg "Reloading GOGS Git Server VIA Docker Compose" "composegogs" || true
+        docker-compose $OPTS up $UPOPTS
+        ;;
+
+    restart)
+        docker-compose $OPTS stop
+        docker-compose $OPTS up $UPOPTS
+        ;;
+
+    *)
+        log_action_msg "Usage: /etc/init.d/composegogs {start|stop|restart|reload}" || true
+        exit 1
+        ;;
+esac
+
+exit 0

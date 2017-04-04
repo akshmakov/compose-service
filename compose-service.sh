@@ -46,7 +46,14 @@ function error_exit
     exit 1
 }
 
-
+function run_dry
+{
+    if [[ $DRY_RUN = NO ]]; then
+	${@}
+    else
+	echo "-dry-run $@"
+    fi
+}
 
 function usage
 {
@@ -289,7 +296,8 @@ function prep_deployment
 
 function prep_config
 {
-    
+
+    # save absolute dir in our config
     CONF=$(cat <<-EOF
 SERVICE_NAME=$SERVICE_NAME
 SERVICE_TARGET_ROOT=`cd $TARGET_DIR; pwd`
@@ -335,12 +343,13 @@ function do_deploy
     prep_config
     
     
-    if [[ ! -z $SERVICE_DEPLOY_YML ]]; then
+    if [[ ! -z $SERVICE_DEPLOY_YML || $SERVICE_INIT_FN ]]; then
 
 	if [[ -e $SERVICE_INIT_FN ]]; then
-	    echo "-debug- using SERVICE_INIT_FN to initialize yml data"
+	    echo "-debug- using SERVICE_INIT_FN to initialize yml data" >&3
 	    YML_DATA=$SERVICE_INIT_FN
 	else
+	    echo "No Service Specific Init Function, using compose YML as is"
 	    YML_DATA=$(cat $SERVICE_DEPLOY_YML)
 	fi
 
@@ -388,6 +397,22 @@ function do_update
 
 function do_remove
 {
+    if [[ -e  $SERVICE_DEPLOYMENT ]]; then
+	echo "Removing Service Deployment $SERVICE_DEPLOYMENT"
+	run_dry rm $SERVICE_DEPLOYMENT
+    else
+	echo "No Service Deployment Found"
+    fi
+
+    
+    if [[ -e $SERVICE_CONFIG ]]; then
+       echo "Removing Service Configuration $SERVICE_CONFIG"
+       run_dry rm $SERVICE_CONFIG
+    else
+	echo "No Service Config Found"
+    fi
+
+    
     return 0
 }
 
@@ -395,6 +420,15 @@ function do_destroy
 {
     if [[ $FORCE = NO ]] ; then
 	error_exit "Use the --force , Luke"
+    fi
+
+    do_remove
+
+    if [[ -d $SERVICE_DATA ]] ; then
+	read -p  "About To Destroy Service Data: $SERVICE_DATA - PRESS ENTER TO CONFIRM"
+	run_dry rm -rf $SERVICE_DATA
+    else
+	echo "Service Data $SERVICE_DATA Doesn't Exist"
     fi
 }
 
@@ -405,34 +439,34 @@ function do_destroy
 
 case $COMMAND in
     deploy)
-	echo "Deploying Service $SERVICE_NAME"
+	echo "Deploying compose-service $SERVICE_NAME"
 	do_deploy
 	;;
     install-initd)
-	echo "Installing init.d service for $SERVICE_NAME"
+	echo "Installing compose-service $SERVICE_NAME as init.d service under system root"
 	do_install_initd
 	;;
     install-cron)
-	echo "Installing $SERVICE_NAME as crontab under current user $USER"
+	echo "Installing compose-service $SERVICE_NAME as crontab under current user $USER"
 	do_install_cron
 	;;
     install-compose)
-	echo "Installing $SERVICE_NAME under compose-service umbrella"
+	echo "Installing  compose-service $SERVICE_NAME under compose-service umbrella"
 	do_install_compose
 	;;
     update)
-	echo "Updating $SERVICE_NAME"
+	echo "Updating compose-service $SERVICE_NAME"
 	do_update
 	;;
     remove)
-	echo "Removing $SERVICE_NAME"
+	echo "Removing compose-service $SERVICE_NAME (Will Not Destroy Data)"
 	do_remove
 	;;
     destroy)
-	echo "Destroying $SERVICE_NAME"
+	echo "Destroying compose-service $SERVICE_NAME"
 	do_destroy
 	;;
     *)
-	error_exit "$COMMAND - Unknown Command"
+	error_exit "compose-service :: $COMMAND - Unknown Command"
 	;;
 esac		

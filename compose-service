@@ -1,0 +1,10 @@
+SERVICE_NAME="TEST-SERVICE"
+
+function do_service_init
+{
+  cat compose-service.yml
+}
+
+SERVICE_INIT_FN=do_service_init
+SERVICE_DESTROY_FN=do_service_init
+SERVICE_TEST=do_service_init

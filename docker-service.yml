@@ -1,0 +1,7 @@
+Version: "2"
+
+service:
+  web:
+    name: $SERVICE_NAME _web
+    volumes:
+      - "${SERVICE_DATA} :/test"
