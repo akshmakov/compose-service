@@ -1,7 +1,7 @@
-Version: "2"
+version: '2'
 
-service:
+services:
   web:
-    name: $SERVICE_NAME _web
-    volumes:
-      - "${SERVICE_DATA} :/test"
+    image: armhfbuild/nginx:latest
+    ports:
+      - "8880:80"

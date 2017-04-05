@@ -1,4 +1,4 @@
-SERVICE_NAME="TEST-SERVICE"
+SERVICE_NAME="nginx-test-alpha"
 
 function do_service_init
 {

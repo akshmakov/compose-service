@@ -1,5 +1,4 @@
 #!/bin/sh
-
 ### BEGIN INIT INFO
 # Provides:		compose-service
 # Required-Start:	$docker
@@ -14,6 +13,7 @@ set -e
 
 SERVICE_NAME="compose-service"
 UPOPTS="-d --no-recreate --no-build --no-deps"
+
  
 . /lib/lsb/init-functions
 
