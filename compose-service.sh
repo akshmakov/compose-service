@@ -87,8 +87,8 @@ Usage: $PROGNAME [OPTIONS] action
     -f|--force secondary flag required to destroy system
     -v|--verbose verbose (extra messages)
     -c|--config /etc/compose-service/
-    -t|--target-dir /var/opt/deploy  root folder for deployment install 
-    -d|--data-dir /var/opt/  root folder for data volumes
+    -t|--target-dir /var/opt/compose-service/deploy  root folder for deployment install 
+    -d|--data-dir /var/opt/compose-service/data  root folder for data volumes
     -r|--dry-run dry-run print steps but do not install service
     -h|--help Print This Help
   action: 
@@ -276,10 +276,12 @@ EOF
 ###
 
 if [ -e  $SERVICE_FILE ] ; then
+    echo "Found + Loading Service Definition : $SERVICE_FILE"
     source $SERVICE_FILE
 fi
 
 if [ -e $SERVICE_FILE.override ] ; then
+    echo "Found + Loading Service Definition Override: $SERVICE_FILE.override"
     source $SERVICE_FILE.override
 fi
 
@@ -469,7 +471,7 @@ function do_deploy
     prep_deployment
     prep_config
     YML_DATA=""
-    if [[ -e $SERVICE_INIT_FN ]]; then
+    if [[ ! -z $SERVICE_INIT_FN ]]; then
 	echo "-debug- using SERVICE_INIT_FN to initialize yml data" >&3
 	YML_DATA=$($SERVICE_INIT_FN)
     elif [[ -e $SERVICE_DEPLOY_YML ]]; then
@@ -526,7 +528,7 @@ function prep_initd_service
     # po'mans templating
     
     initd_data=$(cat <<-EOF
-#!/bin/sh
+#!/bin/bash
 ### BEGIN INIT INFO
 # Provides:		$SERVICE_NAME
 # Required-Start:	\$docker
@@ -538,17 +540,28 @@ function prep_initd_service
 
 set -e
 
+. /lib/lsb/init-functions
 
-SERVICE_NAME=$SERVICE_NAME
 SERVICE_CONFIG=$SERVICE_CONFIG
-SERVICE_DATA=$SERVICE_DATA
-SERVICE_DEPLOYMENT=$SERVICE_DEPLOYMENT
+
+
+if [[ ! -f \$SERVICE_CONFIG || ! -r \$SERVICE_CONFIG ]]; then
+    log_daemon_msg "Could Not find compose-service configuration - service broken"
+    exit 1
+fi
+
+source $SERVICE_CONFIG
+
+if [[ -z \$SERVICE_NAME || -z \$SERVICE_DEPLOYMENT ]]; then
+    log_daemon_msg "Compose-service config loaded but malformed - service broken"
+    exit 1
+fi
+
+
 
 OPTS="-f \$SERVICE_DEPLOYMENT -p \$SERVICE_NAME "
-
 UPOPTS="-d --no-recreate --no-build --no-deps"
  
-. /lib/lsb/init-functions
 
 case "\$1" in
     start)
@@ -561,6 +574,10 @@ case "\$1" in
         docker-compose \$OPTS stop 
         ;;
 
+    down)
+        log_daemon_msg "Stoping compose-service" "\$SERVICE_NAME" || true
+        docker-compose \$OPTS down    
+        ;;
 
     reload)
         log_daemon_msg "Reloading compose-service" "\$SERVICE_NAME" || true
@@ -580,7 +597,7 @@ case "\$1" in
         ;;
 
     *)
-        log_action_msg "Usage: /etc/init.d/composegogs {start|stop|restart|reload|recreate}" || true
+        log_action_msg "Usage: /etc/init.d/composegogs {start|stop|down|restart|reload|recreate}" || true
         exit 1
         ;;
 esac
@@ -610,9 +627,6 @@ $initd_data
 EOF
     fi
 
-    run_dry chmod +x $SERVICE_INITD_INSTALL
-    
-    run_dry update-rc.d $SERVICE_NAME defaults
     
     return 0
 }
@@ -634,7 +648,9 @@ function do_install_initd
     prep_initd_service
 
     echo "Updating init.d rc scripts using update-rc.d"
+    run_dry chmod +x $SERVICE_INITD_INSTALL
     run_dry update-rc.d $SERVICE_NAME defaults
+
 
     echo "Done Install initd service for $SERVICE_NAME"
 
@@ -709,6 +725,11 @@ fi
 
 for f in \$SERVICE_MANAGED_ROOT/*
 do
+
+if [[  ! -f \$f ]]; then
+  log_daemon_msg "compose-service broken link in enabled services directory - \$f"
+  exit 1
+fi
 
 source \$f
 
@@ -846,7 +867,7 @@ function destroy_initd_service
 	echo "Removing from init rc"
 	run_dry update-rc.d -f $SERVICE_NAME remove
 	echo "Removing $SERVICE_INITD_INSTALL"
-	run_dry  rm $SERVICE_INITD_INSTALL
+	run_dry  rm -f $SERVICE_INITD_INSTALL
 	echo "Succesfully Removed initd service"
     else
 	error_exit "No initd service $SERVICE_INITD_INSTALL Found"

@@ -2,7 +2,6 @@
 # install compose-service utility
 #
 
-
 DRY_RUN=${DRY_RUN-NO}
 COMPOSE_SERVICE_TARGET_DIR=${COMPOSE_SERVICE_TARGET_DIR-/var/opt/compose-service/deploy}
 COMPOSE_SERVICE_DATA_DIR=${COMPOSE_SERVICE_DATA_DIR-/var/opt/compose-service/data}
