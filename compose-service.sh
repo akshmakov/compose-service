@@ -18,7 +18,7 @@
 ### COMPOSE_SERVICE_CONFIG_DIR -c --config-dir
 ###   Default: /etc/compose-service/
 ### COMPOSE_SERVICE_DATA_DIR -d --data-dir
-###   Default: /var/opt/compose-service/$SERVICE_NAME/
+###   Default: /var/opt/compose-service/data/
 ### COMPOSE_SERVICE_DEFINITION -s --service
 ###   Location of service definition file
 ###   Default: ./compose-service
@@ -119,7 +119,7 @@ SERVICE_NAME=${COMPOSE_SERVICE_NAME-"compose-service-$INVOKE_TS"}
 TARGET_DIR=${COMPOSE_SERVICE_TARGET_DIR-/var/opt/compose-service/deploy}
 
 # Service YML Data Volume Root
-DATA_DIR=${COMPOSE_SERVICE_DATA_DIR-/var/opt/compose-service}
+DATA_DIR=${COMPOSE_SERVICE_DATA_DIR-/var/opt/compose-service/data}
 
 # Configuration Directory
 CONF_DIR=${COMPOSE_SERVICE_CONFIG_DIR-/etc/compose-service}
@@ -284,14 +284,6 @@ if [ -e $SERVICE_FILE.override ] ; then
 fi
 
 
-if [[  -z  $SERVICE_INIT_FN \
-	    || -z $SERVICE_DESTROY_FN \
-	    || -z $SERVICE_TEST \
-    ]] ; then
-
-    
-    echo "Malformed Service File $SERVICE_FILE : Missing Required Variables"    
-fi
 
 
 
@@ -301,6 +293,7 @@ fi
 
 # our docker-compose yml file for service deployments
 SERVICE_DEPLOY_YML=${SERVICE_DEPLOY_YML-"./docker-service.yml"}
+SERVICE_ALT_YML=${SERVICE_ALT_YML-"./docker-compose.yml"}
 
 # the target path/name of the compose yml
 SERVICE_DEPLOYMENT=$TARGET_DIR/$SERVICE_NAME.yml
@@ -475,34 +468,34 @@ function do_deploy
 {
     prep_deployment
     prep_config
-    
-    
-    if [[ ! -z $SERVICE_DEPLOY_YML || ! -z  $SERVICE_INIT_FN ]]; then
+    YML_DATA=""
+    if [[ -e $SERVICE_INIT_FN ]]; then
+	echo "-debug- using SERVICE_INIT_FN to initialize yml data" >&3
+	YML_DATA=$($SERVICE_INIT_FN)
+    elif [[ -e $SERVICE_DEPLOY_YML ]]; then
+	echo "No Service Init Function Defined, using $SERVICE_DEPLOY_YML"
+	YML_DATA=$(cat $SERVICE_DEPLOY_YML)
+    elif [[ -e $SERVICE_ALT_YML ]]; then
+	echo "No Service Init Function or Deploy YML, falling back to $SERVICE_ALT_YML"
+	YML_DATA=$(cat $SERVICE_ALT_YML)
+    else
+	error_exit "No YML or YML factory found"
+    fi
 
-	if [[ ! -z $SERVICE_INIT_FN ]]; then
-	    echo "-debug- using SERVICE_INIT_FN to initialize yml data" >&3
-	    YML_DATA=$($SERVICE_INIT_FN)
-	else
-	    echo "-debug- No Service Specific Init Function, using compose YML as is" >&3
-	    YML_DATA=$(cat $SERVICE_DEPLOY_YML)
-	fi
-
-	cat <<-EOF >&3
+    cat <<-EOF >&3
 -------------------debug-----------------
 $YML_DATA
 -----------------------------------------
 EOF
 	
-	if [[ $DRY_RUN = NO ]]; then
-	    cat <<-EOF >  $SERVICE_DEPLOYMENT
+    if [[ $DRY_RUN = NO ]]; then
+	cat <<-EOF >  $SERVICE_DEPLOYMENT
 $YML_DATA
 EOF
-	else
-	    echo "-dry-run- cat \$YML_DATA > $SERVICE_DEPLOYMENT"
-	fi
     else
-	error_exit "Service Defintion does not define any deploy files"
+	echo "-dry-run- cat \$YML_DATA > $SERVICE_DEPLOYMENT"
     fi
+    
 
     return 0
     
@@ -688,7 +681,7 @@ COMPOSE_INITD_INSTALL=$INITD_INSTALL_DIR/$COMPOSE_INITD_SERVICE_NAME
 function install_compose_initd
 {
     if [[ ! -d $SERVICE_MANAGED_ROOT ]]; then
-	run_dry mkdir $SERVICE_MANAGED_ROOT
+	run_dry mkdir -p $SERVICE_MANAGED_ROOT
     fi
 
     initd_data=$(cat <<-EOF
