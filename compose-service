@@ -2,7 +2,7 @@ SERVICE_NAME="nginx-test-alpha"
 
 function do_service_init
 {
-  cat compose-service.yml
+  cat docker-service.yml
 }
 
 SERVICE_INIT_FN=do_service_init

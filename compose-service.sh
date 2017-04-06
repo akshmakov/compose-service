@@ -38,6 +38,11 @@
 PROGNAME=$(basename $0)
 INVOKE_TS=$(date +"%s")
 
+## Global System Constants
+INITD_INSTALL_DIR=/etc/init.d
+COMPOSE_INITD_SERVICE_NAME='compose-service'
+
+
 
 function error_exit
 {
@@ -48,6 +53,12 @@ function error_exit
     #----------------------------------------------------------------
     echo "${PROGNAME}: ${1:-"Unknown Error"}" 1>&2
     exit 1
+}
+
+function check_if_dir_empty
+{
+    ! [ "$(ls -A $1)" ]
+
 }
 
 function run_dry
@@ -83,8 +94,10 @@ Usage: $PROGNAME [OPTIONS] action
   action: 
     deploy - deploy compose-service (does not install init.d or cron)
     install-initd - install as init.d service
+    remove-initd - remove int.d service
     install-cron - install service as crontab under current user
     install-compose - install under compose-service umbrella
+    remove-compose - remove from compose-service umbrella
     update - update deployment
     remove - remove deployment and service
     destroy - remove and delete data (requires -f|--force)
@@ -118,6 +131,7 @@ DRY_RUN=NO
 
 ### Command Placeholder
 COMMAND="HELP"
+
 
 
 #####################################################
@@ -279,7 +293,11 @@ if [[  -z  $SERVICE_INIT_FN \
     echo "Malformed Service File $SERVICE_FILE : Missing Required Variables"    
 fi
 
-    
+
+
+##################################
+####Service Globals (Post-load) ##
+##################################
 
 # our docker-compose yml file for service deployments
 SERVICE_DEPLOY_YML=${SERVICE_DEPLOY_YML-"./docker-service.yml"}
@@ -292,6 +310,7 @@ SERVICE_DATA=$DATA_DIR/$SERVICE_NAME
 
 # Service configurations live in subdir of CONF_DIR
 SERVICE_CONFIG_ROOT=$CONF_DIR/service.d
+SERVICE_MANAGED_ROOT=$CONF_DIR/enabled
 SERVICE_CONFIG=$SERVICE_CONFIG_ROOT/$SERVICE_NAME.service
 
 
@@ -348,19 +367,22 @@ function prep_deployment
     # to deploy (and arent using -f/--force)
     #----------------------------------------
 
+    echo "Checking and Preparing Deployment Directories for $SERVICE_NAME"
+
     #likely never gets used
     if [[ ! -d $CONF_DIR && $FORCE != YES ]]; then
 	error_exit "Cannot Deploy $SERVICE_NAME, Configuration Directory $CONF_DIR doesn't exist or isn't a directory"
+    else
+	echo "-debug- Configuration Directory $CONF_DIR found or will be created" >&3
     fi
 
     if [[ ! -d $SERVICE_CONFIG_ROOT ]]; then
-	echo "First configured deployment Creating Service dir $SERVICE_CONFIG_ROOT" >&3	
-	if [[ $DRY_RUN = NO ]]; then
-	    mkdir -p $SERVICE_CONFIG_ROOT
-	else
-	    echo "-dry-run- mkdir -p $SERVICE_CONFIG_ROOT"
-	fi
+	echo "-debug- First configured deployment Creating Service dir $SERVICE_CONFIG_ROOT" >&3
+	run_dry mkdir -p $SERVICE_CONFIG_ROOT
+    else
+	echo "-debug- Service Configuration Directory $SERVICE_CONFIG_ROOT exists, this isn't our first rodeo" >&3
     fi
+    
 
 
     #------------
@@ -368,6 +390,8 @@ function prep_deployment
     #------------
     if [[ ! -d $DATA_DIR ]]; then
 	error_exit "Cannot Deploy $SERVICE_NAME, Data Root Directory $DATA_DIR doesn't exist or isn't a directory"
+    else
+	echo "-debug- Found Service Data Root  $DATA_DIR " >&3
     fi
 
     #------------
@@ -375,7 +399,11 @@ function prep_deployment
     #------------
     if [[ ! -d $TARGET_DIR ]]; then
 	error_exit "Cannot Deploy $SERVICE_NAME, Target Dir $TARGET_DIR doesn't exist"
+    else
+	echo "-debug- Found Target Root : $TARGET_DIR" >&3
+	
     fi
+    
 
 
     #------------
@@ -384,6 +412,7 @@ function prep_deployment
     if [[ -d $SERVICE_DATA ]]; then
 	echo "-debug- Service Data Folder $SERVICE_DATA exists" >&3
     else
+	echo "-debug- Creating Service Data Folder $SERVICE_DATA" >&3
 	run_dry mkdir -p $SERVICE_DATA
     fi
 
@@ -395,12 +424,17 @@ function prep_deployment
     
     if [[ -e $SERVICE_DEPLOYMENT && $FORCE != YES ]]; then
 	error_exit "Cannot Deploy $SERVICE_NAME Deployment : $SERVICE_DEPLOYMENT exists  - use update or --force"
+    else
+	echo "-debug- Service Deployment $SERVICE_DEPLOYMENT will be installed" >&3
     fi
 
 
     if [[ -e $SERVICE_CONFIG && $FORCE != YES ]]; then
 	error_exit "Cannot deploy $SERVICE_NAME Deployment Configuration File : $SERVICE_CONFIG exists - use update or --force"
+    else
+	echo "-debug- Service Configuration $SERVICE_CONFIG will be installed" >&3
     fi
+	
 
     return 0
 }
@@ -408,13 +442,12 @@ function prep_deployment
 function prep_config
 {
 
+    echo "Preparing compose-service configuration for $SERVICE_NAME"
     # save absolute dir in our config
     CONF=$(cat <<-EOF
 SERVICE_NAME=$SERVICE_NAME
-SERVICE_TARGET_ROOT=`cd $TARGET_DIR; pwd`
-SERVICE_COMPOSE=`cd $TARGET_DIR;pwd`/$SERVICE_NAME.yml
-SERVICE_DATA_ROOT=`cd $DATA_DIR;pwd`
-SERVICE_DATA_DIR=`cd $DATA_DIR;pwd`/$SERVICE_NAME
+SERVICE_DATA=$SERVICE_DATA
+SERVICE_DEPLOYMENT=$SERVICE_DEPLOYMENT
 EOF
 	)
 
@@ -425,6 +458,7 @@ $CONF
 EOF
    
 
+    echo "-debug- Installing Service Configuration to $SERVICE_CONFIG" >&3
     if [[ $DRY_RUN = NO ]]; then
 	cat <<-EOF > $SERVICE_CONFIG
 $CONF
@@ -443,13 +477,13 @@ function do_deploy
     prep_config
     
     
-    if [[ ! -z $SERVICE_DEPLOY_YML || $SERVICE_INIT_FN ]]; then
+    if [[ ! -z $SERVICE_DEPLOY_YML || ! -z  $SERVICE_INIT_FN ]]; then
 
-	if [[ -e $SERVICE_INIT_FN ]]; then
+	if [[ ! -z $SERVICE_INIT_FN ]]; then
 	    echo "-debug- using SERVICE_INIT_FN to initialize yml data" >&3
-	    YML_DATA=$SERVICE_INIT_FN
+	    YML_DATA=$($SERVICE_INIT_FN)
 	else
-	    echo "No Service Specific Init Function, using compose YML as is"
+	    echo "-debug- No Service Specific Init Function, using compose YML as is" >&3
 	    YML_DATA=$(cat $SERVICE_DEPLOY_YML)
 	fi
 
@@ -467,7 +501,7 @@ EOF
 	    echo "-dry-run- cat \$YML_DATA > $SERVICE_DEPLOYMENT"
 	fi
     else
-	error_exit "Service Defintion does not define deploy files"
+	error_exit "Service Defintion does not define any deploy files"
     fi
 
     return 0
@@ -482,12 +516,14 @@ EOF
 #######
 
 ### Initd Locals
-INITD_INSTALL_DIR=/etc/init.d
 SERVICE_INITD_INSTALL=$INITD_INSTALL_DIR/$SERVICE_NAME
 
 # Deploy init_d service files
 function prep_initd_service
 {
+
+    echo "Preparing initd service for $SERVICE_NAME service install : $SERVICE_INITD_INSTALL"
+
     
     if [[ -e $SERVICE_INITD_INSTALL ]]; then
 	error_exit "init_d service for $SERVICE_NAME already exists"
@@ -509,6 +545,7 @@ function prep_initd_service
 
 set -e
 
+
 SERVICE_NAME=$SERVICE_NAME
 SERVICE_CONFIG=$SERVICE_CONFIG
 SERVICE_DATA=$SERVICE_DATA
@@ -523,13 +560,14 @@ UPOPTS="-d --no-recreate --no-build --no-deps"
 case "\$1" in
     start)
         log_daemon_msg "Starting compose-service" "\$SERVICE_NAME" ||  true
-        docker-compose \$OPTS up \$UPOPTS
+        docker-compose \$OPTS up \$UPOPTS 
         ;;
 
     stop)
         log_daemon_msg "Stopping compose-service" "\$SERVICE_NAME" || true
-        docker-compose \$OPTS stop
+        docker-compose \$OPTS stop 
         ;;
+
 
     reload)
         log_daemon_msg "Reloading compose-service" "\$SERVICE_NAME" || true
@@ -581,16 +619,12 @@ EOF
 
     run_dry chmod +x $SERVICE_INITD_INSTALL
     
-    #update-rc.d $SERVICE_NAME defaults
+    run_dry update-rc.d $SERVICE_NAME defaults
     
     return 0
 }
 
 
-function destroy_initd_service
-{
-    return 0
-}
 
 
 
@@ -598,13 +632,18 @@ function do_install_initd
 {
     
     if [[ $DRY_RUN == "NO" \
-		&& -w $SERVICE_INITD_INSTALL_DIR \
+		&& ! -w $INITD_INSTALL_DIR \
 	]]; then
-	error_exit "Run initd install with sudo pleaseWrite Access to /etc/init.d to install service"
+	error_exit "Run initd install with Write Access to /etc/init.d to install service"
     fi
 
-    prep_initd_service
     
+    prep_initd_service
+
+    echo "Updating init.d rc scripts using update-rc.d"
+    run_dry update-rc.d $SERVICE_NAME defaults
+
+    echo "Done Install initd service for $SERVICE_NAME"
 
     
     return 0
@@ -627,6 +666,7 @@ function do_install_initd
 
 function do_install_cron
 {
+    
     return 0
 }
 
@@ -640,10 +680,145 @@ function do_install_cron
 #######
 ####### do_install_compose
 #######
+##INITD_INSTALL_DIR=/etc/init.d from do_install_initd
+COMPOSE_INITD_INSTALL=$INITD_INSTALL_DIR/$COMPOSE_INITD_SERVICE_NAME
 
+
+
+function install_compose_initd
+{
+    if [[ ! -d $SERVICE_MANAGED_ROOT ]]; then
+	run_dry mkdir $SERVICE_MANAGED_ROOT
+    fi
+
+    initd_data=$(cat <<-EOF
+#!/bin/bash
+### BEGIN INIT INFO
+# Provides:		$COMPOSE_INITD_SERVICE_NAME
+# Required-Start:	\$docker
+# Required-Stop:	\$docker
+# Default-Start:	2 3 4 5
+# Default-Stop:		0 1 6
+# Short-Description:	master compose-service 
+### END INIT INFO
+
+set -e
+
+SERVICE_MANAGED_ROOT=$SERVICE_MANAGED_ROOT
+
+ 
+. /lib/lsb/init-functions
+
+if ! [ "\$(ls -A \$SERVICE_MANAGED_ROOT/)" ]; then
+log_daemon_msg "compose-service has no managed services, init.d service is a dummy"
+exit 0
+fi
+
+for f in \$SERVICE_MANAGED_ROOT/*
+do
+
+source \$f
+
+OPTS="-f \$SERVICE_DEPLOYMENT -p \$SERVICE_NAME "
+UPOPTS="-d --no-recreate --no-build --no-deps"
+
+
+case "\$1" in
+    start)
+        log_daemon_msg "Starting compose-service" "\$SERVICE_NAME" ||  true
+        docker-compose \$OPTS up \$UPOPTS
+        ;;
+
+    stop)
+        log_daemon_msg "Stopping compose-service" "\$SERVICE_NAME" || true
+        docker-compose \$OPTS stop
+        ;;
+
+    down)
+        log_daemon_msg "Bringing down containers" "\$SERVICE_NAME" || true
+        docker-compose \$OPTS down
+        ;;
+
+    reload)
+        log_daemon_msg "Reloading compose-service" "\$SERVICE_NAME" || true
+        docker-compose \$OPTS up \$UPOPTS
+        ;;
+
+    restart)
+        log_daemon_msg "Restarting compose-service" "\$SERVICE_NAME" || true
+        docker-compose \$OPTS stop
+        docker-compose \$OPTS up \$UPOPTS
+        ;;
+
+    recreate)
+        log_daemon_msg "Recreating compose-service" "\$SERVICE_NAME" || true
+        docker-compose \$OPTS down
+        docker-compose \$OPTS up \$UPOPTS
+        ;;
+
+    *)
+        log_action_msg "Usage: /etc/init.d/composegogs {start|stop|restart|reload|recreate}" || true
+        exit 1
+        ;;
+esac
+
+done
+
+exit 0
+EOF
+		)
+
+
+    # repeated cats but who cares I like cats
+    
+    cat <<-EOF >&3
+--------debug-------$COMPOSE_INITD_SERVICE_NAME---initd-data----------
+$initd_data
+----------------------------------------------------------
+EOF
+
+    
+    if [[ $DRY_RUN = NO ]]; then
+	cat <<-EOF > $COMPOSE_INITD_INSTALL
+$initd_data
+EOF
+    else
+	cat <<-EOF
+--dry-run---cat > $COMPOSE_INITD_INSTALL
+$initd_data
+EOF
+    fi
+
+    
+    run_dry chmod +x $COMPOSE_INITD_INSTALL
+
+    echo "Enabling service using update-rc.d"
+    run_dry update-rc.d $COMPOSE_INITD_SERVICE_NAME defaults
+
+    return 0;
+}
 
 function do_install_compose
 {
+    
+    
+    if [[ ! -e $COMPOSE_INITD_INSTALL ]]; then
+	echo "Installing Master Compose initd service"
+	echo "rerun compose-service to deploy your service"
+	install_compose_initd
+	return 0
+    fi
+
+    if [[ ! -e $SERVICE_CONFIG ]]; then
+	error_exit "compose-service $SERVICE_NAME" \
+		   "is not installed Service Config $SERVICE_CONFIG missing"
+    fi
+
+
+    echo "Creating symlink for $SERVICE_NAME in $SERVICE_MANAGED_ROOT"
+    run_dry ln -s $SERVICE_CONFIG $SERVICE_MANAGED_ROOT/$SERVICE_NAME
+    echo "$SERVICE_NAME installed under compose-service service, restart the service or reboot to see it brought up"
+	
     return 0
 }
 
@@ -665,6 +840,126 @@ function do_update
 ####### do_remove
 #######
 
+function destroy_initd_service
+{
+    #-------------------------------------
+    # This deletes the actual initd files
+    #-------------------------------------
+
+    echo "Destroying initd service $SERVICE_INITD_INSTALL"
+    if [[ -e $SERVICE_INITD_INSTALL ]]; then
+	echo "Stopping Service..."
+	run_dry service $SERVICE_NAME stop
+	echo "Removing from init rc"
+	run_dry update-rc.d -f $SERVICE_NAME remove
+	echo "Removing $SERVICE_INITD_INSTALL"
+	run_dry  rm $SERVICE_INITD_INSTALL
+	echo "Succesfully Removed initd service"
+    else
+	error_exit "No initd service $SERVICE_INITD_INSTALL Found"
+    fi
+    
+
+    
+    return 0
+}
+
+function destroy_compose_initd_service
+{
+    #-------------------------------------
+    # This deletes the actual initd files
+    #  for compose-service
+    #-------------------------------------
+
+
+    echo "Destroying initd service for master compose-service"
+
+    if [[ -e $COMPOSE_INITD_INSTALL ]]; then
+	echo "Stopping Service..."
+	run_dry service $COMPOSE_INITD_SERVICE_NAME stop
+	echo "Removing from init rc"
+	run_dry update-rc.d -f $COMPOSE_INITD_SERVICE_NAME remove
+	echo "Removing $COMPOSE_INITD_INSTALL"
+	run_dry rm -f $COMPOSE_INITD_INSTALL
+	echo "Succesfully removed initd service $COMPOSE_INITD_INSTALL"
+    else
+	error_exit "No compose-service initd service Found"
+    fi
+    return 0
+}
+
+
+function destroy_compose_service
+{
+    #-------------------------------------
+    # Destroys/Deletes the master
+    # compose-service initd service
+    #-------------------------------------
+    
+    echo "Removing umbrella compose-service $SERVICE_NAME"
+
+    
+    if [[ ! -e $COMPOSE_INITD_INSTALL ]];
+    then
+	error_exit "Master compose-service initd service not installed"\
+		   "and no services are installed - nothing to remove"
+    fi
+
+    
+	
+    if check_if_dir_empty $SERVICE_MANAGED_ROOT;
+    then
+	if [[ $FORCE = YES ]]; then
+	    echo "Force removing empty compose-service, removing master service"
+	    destroy_compose_initd_service
+	    return 0
+	else
+	    error_exit  "No managed services to remove, to delete master service --force "
+	fi
+    fi
+	
+
+    if [[ -e $SERVICE_MANAGED_ROOT/$SERVICE_NAME ]]; then
+	echo "Deleting Symlinks in $SERVICE_MANAGED_ROOT"
+	service $COMPOSE_INITD_SERVICE_NAME stop
+	service $COMPOSE_INITD_SERVICE_NAME down
+	run_dry rm $SERVICE_MANAGED_ROOT/$SERVICE_NAME	
+	service $COMPOSE_INITD_SERVICE_NAME start
+    else
+	error_exit "$SERVICE_NAME not installed under compose-umbrella"
+    fi
+
+    return 0;
+	
+
+}
+
+function do_remove_compose
+{
+
+    
+    if [[ -e $COMPOSE_INITD_INSTALL ]]; then
+	echo "Removing initd service for $SERVICE_NAME"
+	
+	destroy_compose_service
+    fi
+
+    return 0
+
+}
+
+function do_remove_initd
+{
+
+    if [[ -e $SERVICE_INITD_INSTALL ]]; then
+	echo "Removing initd service for $SERVICE_NAME"
+	destroy_initd_service
+    fi
+
+    return 0
+
+
+}
 
 
 function do_remove
@@ -683,6 +978,7 @@ function do_remove
     else
 	echo "No Service Config Found"
     fi
+
 
     
     return 0
@@ -705,7 +1001,6 @@ function do_destroy
 	error_exit "Use the --force , Luke"
     fi
 
-    do_remove
 
     if [[ -d $SERVICE_DATA ]] ; then
 	read -p  "About To Destroy Service Data: $SERVICE_DATA - PRESS ENTER TO CONFIRM"
@@ -713,6 +1008,7 @@ function do_destroy
     else
 	echo "Service Data $SERVICE_DATA Doesn't Exist"
     fi
+
 }
 
 ##########################################
@@ -729,6 +1025,10 @@ case $COMMAND in
 	echo "Installing compose-service $SERVICE_NAME as init.d service under system root"
 	do_install_initd
 	;;
+    remove-initd)
+	echo "Stopping and removing compose-service $SERVICE_NAME from init.d"
+	do_remove_initd
+	;;
     install-cron)
 	echo "Installing compose-service $SERVICE_NAME as crontab under current user $USER"
 	do_install_cron
@@ -737,19 +1037,28 @@ case $COMMAND in
 	echo "Installing  compose-service $SERVICE_NAME under compose-service umbrella"
 	do_install_compose
 	;;
+    remove-compose)
+	echo "Removing compose-service $SERVICE_NAME from compose-service umbrella"
+	do_remove_compose
+	;;
     update)
 	echo "Updating compose-service $SERVICE_NAME"
 	do_update
 	;;
     remove)
-	echo "Removing compose-service $SERVICE_NAME (Will Not Destroy Data)"
+	echo "Removing compose-service $SERVICE_NAME and any installed services(Will Not Destroy Data)"
+	do_remove_compose
+	do_remove_initd
 	do_remove
 	;;
     destroy)
 	echo "Destroying compose-service $SERVICE_NAME"
+	do_remove
 	do_destroy
 	;;
     *)
 	error_exit "compose-service :: $COMMAND - Unknown Command"
 	;;
 esac		
+
+exit 0
