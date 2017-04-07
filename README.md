@@ -2,13 +2,13 @@
 
 A linux bootstrap service toolkit for docker-compose. Currently entirely in bash.
 
-Manage docker-compose deployments as system  services using `init` (via `init.d`) , upstart (FUTURE), or alternatively as a cron @restart task
+Manage docker-compose deployments as system  services using `systemd` (via `init.d`) , upstart (FUTURE), or alternatively as a cron @restart task
 
 ## Security Note
 
 This is software that is written for fun, research, and limited use in isolated, physically secure network environments.
 
-In the most invasive case, this utility can install a number of init.d scripts, moreover these scripts will execute `docker-compose` on bootup to bring up your dockerized service.
+In the most invasive case, this utility can install a number of system scripts, moreover these scripts will execute `docker-compose` on bootup to bring up your dockerized service.
 
 The script does not request privilege escalation, but instead checks for read/write access to required directories before acting and quits if unavailable, with no silent sudo's.
 
@@ -50,7 +50,7 @@ Checking and Preparing Deployment Directories for nginx-test
 Preparing compose-service configuration for nginx-test
 ```
 
-Afterwards a service can be installed to a system manager, e.g. init
+Afterwards a service can be installed to a system manager, e.g. systemd 
 
 ```
 $# compose-service install-initd
@@ -149,18 +149,15 @@ compose-service can deploy a docker-compose service to the following system mana
 
 **init.d**
 
-Deploy your docker-compose service and create an init.d startup script
+Deploy your docker-compose service and create systemd  startup script in `/etc/init.d`
 
-Your service will start,stop, and be managed as a bona-fide init service and can be controlled via the
-
-`service` interface on debian style systems (or various rc systems on others)
+Your service will start,stop, and be managed as a bona-fide service and can be controlled via the `service` interface on certain debian style systems.
 
 **compose-service**
 
 Deploy under a "master" service managed by compose-service, either init or upstart.
 
-Note: this deployment mode couples all the services under the umbrella service, which can extend boot time and cause unexpected issues if one service fails but doesn
-compose-service deploys yml and configuration files from your project, additionally it can create init.d, upstart, and crontab jobs to enable docker-compose deployments to be managed by the underlying Linux operating system
+Note: this deployment mode couples all the services under the umbrella service, which can extend boot time and cause unexpected issues if one service fails. 
 
 Your service will start, stop, and be managed with other services under a `compose-service` master service
 
@@ -172,6 +169,9 @@ Deploy the service as an `@reboot` crontab, this allows individual users to mana
 
 Deploy your docker-compose service as a bona fide upstart job
 
+**other**
+
+Hope to support more script based service systems in the future.
 
 ## Project Preparation
 
@@ -230,7 +230,7 @@ The compose-service file is fundamentally an include file with shell variables t
 
 At a minimum the compose-service file should define the following variables
 
-- `SERVICE_NAME` - name for the service (will be the init.d, compose-service or upstart name for this service)
+- `SERVICE_NAME` - name for the service (will be the systemd, compose-service or upstart name for this service)
 - `SERVICE_DEPLOY_YML` - path to the deployment YML (will be copied)
 - (Optional) `SERVICE_INIT_FN` - a no parameter bash function which prints the YML to stdout to be printed to deployment file
 
